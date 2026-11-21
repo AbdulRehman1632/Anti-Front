@@ -1,0 +1,15 @@
+{
+  "short_name": "Devdrip CRM",
+  "name": "Devdrip Enterprise CRM & Real-Time Workspace",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "192x192 512x512"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#060a14",
+  "theme_color": "#6366f1",
+  "display": "standalone"
+}
