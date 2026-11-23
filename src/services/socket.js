@@ -2,12 +2,14 @@ import { io } from 'socket.io-client';
 
 let socket = null;
 
+const BACKEND_URL = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '') || window.location.origin;
+
 export const initSocketClient = (currentUser) => {
   if (socket) {
     socket.disconnect();
   }
 
-  socket = io(window.location.origin, {
+  socket = io(BACKEND_URL, {
     transports: ['websocket', 'polling'],
     reconnectionAttempts: 5,
     reconnectionDelay: 1000,

@@ -111,7 +111,6 @@ export const AuthProvider = ({ children }) => {
   const [token, setToken] = useState(() => localStorage.getItem('devdrip_token'));
   const [loading, setLoading] = useState(true);
 
-  // On mount: validate existing token or leave user null (forces login page)
   useEffect(() => {
     const initializeAuth = async () => {
       const storedToken = localStorage.getItem('devdrip_token');
@@ -123,7 +122,6 @@ export const AuthProvider = ({ children }) => {
             setToken(storedToken);
             initSocketClient(res.user);
           } else {
-            // Token invalid — clear it
             localStorage.removeItem('devdrip_token');
             setToken(null);
           }
