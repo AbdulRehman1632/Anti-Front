@@ -11,8 +11,9 @@ export const initSocketClient = (currentUser) => {
 
   socket = io(BACKEND_URL, {
     transports: ['websocket', 'polling'],
-    reconnectionAttempts: 5,
-    reconnectionDelay: 1000,
+    reconnectionAttempts: 2,
+    reconnectionDelay: 2000,
+    timeout: 4000,
   });
 
   socket.on('connect', () => {
@@ -20,6 +21,11 @@ export const initSocketClient = (currentUser) => {
     if (currentUser) {
       socket.emit('user:register', currentUser);
     }
+  });
+
+  socket.on('connect_error', (err) => {
+    // Vercel serverless functions do not support WebSockets; log graceful fallback notice
+    console.warn('ℹ️ Real-time WebSockets unavailable on host (falling back to REST API sync):', err.message);
   });
 
   socket.on('disconnect', () => {

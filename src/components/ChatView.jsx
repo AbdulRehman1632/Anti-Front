@@ -40,7 +40,7 @@ export const ChatView = ({ channels = [], users = [], onOpenNewChannel }) => {
     }
   }, [channels]);
 
-  // Fetch messages when selection changes
+  // Fetch messages when selection changes (with automatic polling fallback if WebSockets are unavailable)
   useEffect(() => {
     const fetchChatMessages = async () => {
       try {
@@ -57,6 +57,16 @@ export const ChatView = ({ channels = [], users = [], onOpenNewChannel }) => {
     };
 
     fetchChatMessages();
+
+    // Polling fallback when WebSockets are disconnected (e.g. backend on Vercel serverless)
+    const interval = setInterval(() => {
+      const socket = getSocket();
+      if (!socket || !socket.connected) {
+        fetchChatMessages();
+      }
+    }, 3500);
+
+    return () => clearInterval(interval);
   }, [activeTab, selectedChannelId, selectedRecipientId]);
 
   // Socket listeners for real-time messages & typing
@@ -134,10 +144,15 @@ export const ChatView = ({ channels = [], users = [], onOpenNewChannel }) => {
 
     try {
       const socket = getSocket();
-      if (socket) {
+      if (socket && socket.connected) {
         socket.emit('message:send', payload);
       } else {
-        await api.sendMessage(payload);
+        // Fallback to REST API if WebSockets unavailable (e.g. Vercel backend)
+        const res = await api.sendMessage(payload);
+        if (res.success && res.message) {
+          setMessages((prev) => [...prev, res.message]);
+          setTimeout(scrollToBottom, 50);
+        }
       }
       setMessageText('');
     } catch (err) {
@@ -147,7 +162,17 @@ export const ChatView = ({ channels = [], users = [], onOpenNewChannel }) => {
 
   const handleReact = async (msgId, emoji) => {
     try {
-      await api.reactToMessage(msgId, emoji);
+      const socket = getSocket();
+      if (socket && socket.connected) {
+        socket.emit('message:react', { messageId: msgId, emoji, user });
+      } else {
+        const res = await api.reactToMessage(msgId, emoji);
+        if (res.success && res.message) {
+          setMessages((prev) =>
+            prev.map((m) => (m._id === msgId ? res.message : m))
+          );
+        }
+      }
     } catch (err) {
       console.error('Reaction error:', err);
     }
