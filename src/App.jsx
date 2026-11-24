@@ -18,6 +18,9 @@ import { InviteModal } from './components/InviteModal.jsx';
 import { ChannelModal } from './components/ChannelModal.jsx';
 import { ProvisionCredentialsModal } from './components/ProvisionCredentialsModal.jsx';
 import { AuthPage } from './components/AuthPage.jsx';
+import { IncomingCallModal } from './components/IncomingCallModal.jsx';
+import { OutgoingCallModal } from './components/OutgoingCallModal.jsx';
+import { MessageToast } from './components/MessageToast.jsx';
 
 
 function LoadingScreen() {
@@ -73,6 +76,7 @@ function MainApp() {
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
   const [isChannelModalOpen, setIsChannelModalOpen] = useState(false);
   const [isProvisionModalOpen, setIsProvisionModalOpen] = useState(false);
+  const [messageToast, setMessageToast] = useState(null);
 
   const loadData = async () => {
     try {
@@ -132,12 +136,20 @@ function MainApp() {
       } catch (e) {}
     };
 
+    const onNewMessage = (msg) => {
+      const senderId = msg?.sender?._id || msg?.sender;
+      if (senderId && senderId !== user?._id) {
+        setMessageToast(msg);
+      }
+    };
+
     socket.on('task:created', onTaskCreated);
     socket.on('task:updated', onTaskUpdated);
     socket.on('task:deleted', onTaskDeleted);
     socket.on('channel:created', onChannelCreated);
     socket.on('customFields:updated', onCustomFieldsUpdated);
     socket.on('lifecycle:updated', onLifecycleUpdated);
+    socket.on('message:new', onNewMessage);
 
     return () => {
       socket.off('task:created', onTaskCreated);
@@ -146,6 +158,7 @@ function MainApp() {
       socket.off('channel:created', onChannelCreated);
       socket.off('customFields:updated', onCustomFieldsUpdated);
       socket.off('lifecycle:updated', onLifecycleUpdated);
+      socket.off('message:new', onNewMessage);
     };
   }, [selectedTask]);
 
@@ -310,12 +323,24 @@ function MainApp() {
         isOpen={isChannelModalOpen}
         onClose={() => setIsChannelModalOpen(false)}
         onChannelCreated={loadData}
+        users={users}
       />
 
       <ProvisionCredentialsModal
         isOpen={isProvisionModalOpen}
         onClose={() => setIsProvisionModalOpen(false)}
         onCredentialsCreated={loadData}
+      />
+
+      {/* Real-Time Call Popup Modals (1-on-1 Direct & Conference Ringing) */}
+      <IncomingCallModal />
+      <OutgoingCallModal />
+
+      {/* Sliding Incoming Message Toast */}
+      <MessageToast
+        toast={messageToast}
+        onClose={() => setMessageToast(null)}
+        onNavigateToChat={() => setCurrentView('chat')}
       />
     </div>
   );

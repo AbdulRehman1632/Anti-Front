@@ -11,9 +11,66 @@ const ICE_SERVERS = {
   ],
 };
 
+// Web Audio API Ringtone Generator (Cross-browser, no external audio file needed)
+let ringtoneInterval = null;
+let ringtoneAudioCtx = null;
+
+const playRingtone = () => {
+  stopRingtone();
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    ringtoneAudioCtx = new AudioCtx();
+
+    const triggerDualBeep = () => {
+      if (!ringtoneAudioCtx || ringtoneAudioCtx.state === 'closed') return;
+      const now = ringtoneAudioCtx.currentTime;
+      // Dual tone (European/US PBX standard: 440Hz + 480Hz)
+      const osc1 = ringtoneAudioCtx.createOscillator();
+      const osc2 = ringtoneAudioCtx.createOscillator();
+      const gain = ringtoneAudioCtx.createGain();
+
+      osc1.frequency.setValueAtTime(440, now);
+      osc2.frequency.setValueAtTime(480, now);
+
+      gain.gain.setValueAtTime(0.12, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 1.1);
+
+      osc1.connect(gain);
+      osc2.connect(gain);
+      gain.connect(ringtoneAudioCtx.destination);
+
+      osc1.start(now);
+      osc2.start(now);
+      osc1.stop(now + 1.1);
+      osc2.stop(now + 1.1);
+    };
+
+    triggerDualBeep();
+    ringtoneInterval = setInterval(triggerDualBeep, 2400);
+  } catch (e) {
+    console.warn('Web Audio ringtone initialization notice:', e.message);
+  }
+};
+
+const stopRingtone = () => {
+  if (ringtoneInterval) {
+    clearInterval(ringtoneInterval);
+    ringtoneInterval = null;
+  }
+  if (ringtoneAudioCtx) {
+    try {
+      ringtoneAudioCtx.close();
+    } catch (e) {}
+    ringtoneAudioCtx = null;
+  }
+};
+
 export const CallProvider = ({ children }) => {
   const { user } = useAuth();
-  const [activeCall, setActiveCall] = useState(null); // { channelId, channelName }
+  const [activeCall, setActiveCall] = useState(null); // { channelId, channelName, callType }
+  const [incomingCall, setIncomingCall] = useState(null); // { callId, caller, targetUserId, channelId, channelName, callType, isDirect, callerSocketId }
+  const [outgoingCall, setOutgoingCall] = useState(null); // { targetUser, channelId, channelName, callType, status: 'ringing'|'accepted'|'declined', reason }
   const [participants, setParticipants] = useState([]);
   const [activeCallsMap, setActiveCallsMap] = useState({});
   const [isAudioMuted, setIsAudioMuted] = useState(false);
@@ -24,7 +81,7 @@ export const CallProvider = ({ children }) => {
   const localStreamRef = useRef(null);
   const peersRef = useRef(new Map()); // socketId -> RTCPeerConnection
 
-  // Listen to socket events for active calls and signaling
+  // Listen to socket events for active calls, ringing, and signaling
   useEffect(() => {
     const socket = getSocket();
     if (!socket) return;
@@ -79,11 +136,46 @@ export const CallProvider = ({ children }) => {
       );
     };
 
+    // ── Incoming Call Ringing ──
+    const handleIncomingCall = (callData) => {
+      if (!callData || !user) return;
+      if (callData.caller?._id === user._id) return; // Don't ring self
+      console.log('🔔 Incoming call received:', callData);
+      setIncomingCall(callData);
+      playRingtone();
+    };
+
+    const handleCallAccepted = ({ channelId, responder, callType }) => {
+      console.log('✅ Call accepted by:', responder?.name);
+      setOutgoingCall((prev) => (prev ? { ...prev, status: 'accepted' } : null));
+      setTimeout(() => setOutgoingCall(null), 1200);
+    };
+
+    const handleCallDeclined = ({ reason, responder }) => {
+      console.log('❌ Call declined:', reason);
+      stopRingtone();
+      setOutgoingCall((prev) => (prev ? { ...prev, status: 'declined', reason } : null));
+      setTimeout(() => {
+        setOutgoingCall(null);
+        leaveCall();
+      }, 2500);
+    };
+
+    const handleCallCancelled = () => {
+      setIncomingCall(null);
+      stopRingtone();
+    };
+
     socket.on('call:active_list', handleActiveList);
     socket.on('call:status_changed', handleStatusChanged);
     socket.on('call:peer_joined', handlePeerJoined);
     socket.on('call:peer_left', handlePeerLeft);
     socket.on('call:media_state_changed', handleMediaChanged);
+
+    socket.on('call:incoming', handleIncomingCall);
+    socket.on('call:accepted', handleCallAccepted);
+    socket.on('call:declined', handleCallDeclined);
+    socket.on('call:cancelled', handleCallCancelled);
 
     return () => {
       socket.off('call:active_list', handleActiveList);
@@ -91,8 +183,13 @@ export const CallProvider = ({ children }) => {
       socket.off('call:peer_joined', handlePeerJoined);
       socket.off('call:peer_left', handlePeerLeft);
       socket.off('call:media_state_changed', handleMediaChanged);
+
+      socket.off('call:incoming', handleIncomingCall);
+      socket.off('call:accepted', handleCallAccepted);
+      socket.off('call:declined', handleCallDeclined);
+      socket.off('call:cancelled', handleCallCancelled);
     };
-  }, [activeCall]);
+  }, [activeCall, user]);
 
   // Helper to create synthetic video track if no real hardware is found
   const createSyntheticMediaStream = () => {
@@ -133,14 +230,14 @@ export const CallProvider = ({ children }) => {
     return stream;
   };
 
-  const joinCall = async (channelId, channelName = 'Meeting') => {
+  const joinCall = async (channelId, channelName = 'Meeting', callType = 'video') => {
     const socket = getSocket();
     if (!socket || !user) return;
 
     let stream = null;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
+        video: callType !== 'audio',
         audio: true,
       });
     } catch (err) {
@@ -150,9 +247,9 @@ export const CallProvider = ({ children }) => {
 
     localStreamRef.current = stream;
     setLocalStream(stream);
-    setActiveCall({ channelId, channelName });
+    setActiveCall({ channelId, channelName, callType });
     setIsAudioMuted(false);
-    setIsVideoOff(false);
+    setIsVideoOff(callType === 'audio');
     setIsScreenSharing(false);
 
     socket.emit('call:join', {
@@ -165,8 +262,122 @@ export const CallProvider = ({ children }) => {
         title: user.title,
       },
       isAudioMuted: false,
-      isVideoOff: false,
+      isVideoOff: callType === 'audio',
     });
+  };
+
+  // 1-on-1 Individual Calling (Audio or Video)
+  const startDirectCall = (targetUser, callType = 'video') => {
+    const socket = getSocket();
+    if (!targetUser || !user) return;
+
+    const directChannelId = `dm-${[user._id, targetUser._id].sort().join('-')}`;
+    const directChannelName = `${targetUser.name}`;
+
+    setOutgoingCall({
+      targetUser,
+      channelId: directChannelId,
+      channelName: directChannelName,
+      callType,
+      status: 'ringing',
+    });
+
+    if (socket) {
+      socket.emit('call:initiate', {
+        caller: {
+          _id: user._id,
+          name: user.name,
+          avatar: user.avatar,
+          role: user.role,
+        },
+        targetUserId: targetUser._id,
+        channelId: directChannelId,
+        channelName: user.name,
+        callType,
+        isDirect: true,
+      });
+    }
+
+    joinCall(directChannelId, directChannelName, callType);
+  };
+
+  // Conference Calling: Rings all members in channel
+  const startChannelCall = (channelId, channelName, callType = 'video') => {
+    const socket = getSocket();
+    if (!channelId || !user) return;
+
+    if (socket) {
+      socket.emit('call:initiate_channel', {
+        caller: {
+          _id: user._id,
+          name: user.name,
+          avatar: user.avatar,
+          role: user.role,
+        },
+        channelId,
+        channelName: channelName || 'Channel Conference',
+        callType,
+      });
+    }
+
+    joinCall(channelId, channelName, callType);
+  };
+
+  // Accept Incoming Call
+  const acceptIncomingCall = () => {
+    if (!incomingCall) return;
+    const socket = getSocket();
+    stopRingtone();
+
+    if (socket) {
+      socket.emit('call:accept', {
+        callId: incomingCall.callId,
+        callerSocketId: incomingCall.callerSocketId,
+        channelId: incomingCall.channelId,
+        channelName: incomingCall.channelName,
+        callType: incomingCall.callType,
+        responder: {
+          _id: user?._id,
+          name: user?.name,
+          avatar: user?.avatar,
+          role: user?.role,
+        },
+      });
+    }
+
+    joinCall(incomingCall.channelId, incomingCall.channelName, incomingCall.callType);
+    setIncomingCall(null);
+  };
+
+  // Decline Incoming Call
+  const declineIncomingCall = () => {
+    if (!incomingCall) return;
+    const socket = getSocket();
+    stopRingtone();
+
+    if (socket) {
+      socket.emit('call:decline', {
+        callId: incomingCall.callId,
+        callerSocketId: incomingCall.callerSocketId,
+        responder: { _id: user?._id, name: user?.name },
+      });
+    }
+
+    setIncomingCall(null);
+  };
+
+  // Cancel Outgoing Call (Caller Hangs Up While Ringing)
+  const cancelOutgoingCall = () => {
+    if (!outgoingCall) return;
+    const socket = getSocket();
+    if (socket) {
+      socket.emit('call:cancel', {
+        targetUserId: outgoingCall.targetUser?._id,
+        channelId: outgoingCall.channelId,
+      });
+    }
+    setOutgoingCall(null);
+    leaveCall();
   };
 
   const leaveCall = () => {
@@ -265,6 +476,8 @@ export const CallProvider = ({ children }) => {
     <CallContext.Provider
       value={{
         activeCall,
+        incomingCall,
+        outgoingCall,
         participants,
         activeCallsMap,
         localStream,
@@ -272,6 +485,11 @@ export const CallProvider = ({ children }) => {
         isVideoOff,
         isScreenSharing,
         joinCall,
+        startDirectCall,
+        startChannelCall,
+        acceptIncomingCall,
+        declineIncomingCall,
+        cancelOutgoingCall,
         leaveCall,
         toggleAudio,
         toggleVideo,

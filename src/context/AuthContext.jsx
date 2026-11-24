@@ -189,6 +189,7 @@ export const AuthProvider = ({ children }) => {
   const canDeleteTasks = () => ['Owner', 'Admin'].includes(user?.role);
   const canManageRoles = () => ['Owner'].includes(user?.role);
   const canInviteMembers = () => ['Owner', 'Admin'].includes(user?.role);
+  const canCreateChannel = () => ['Owner', 'Admin', 'Editor'].includes(user?.role);
 
   return (
     <AuthContext.Provider
@@ -205,6 +206,7 @@ export const AuthProvider = ({ children }) => {
         canDeleteTasks,
         canManageRoles,
         canInviteMembers,
+        canCreateChannel,
       }}
     >
       {children}
