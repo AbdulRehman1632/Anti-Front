@@ -6,7 +6,6 @@ import {
   Hash,
   Lock,
   Video,
-  Phone,
   Plus,
   Circle,
   FileText,
@@ -14,14 +13,15 @@ import {
   MessageSquare,
 } from 'lucide-react';
 
+
 import { api } from '../services/api.js';
 import { getSocket } from '../services/socket.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useCall } from '../context/CallContext.jsx';
 
-export const ChatView = ({ channels = [], users = [], onOpenNewChannel, initialTarget = null }) => {
-  const { user, canInviteMembers, canCreateChannel } = useAuth();
-  const { joinCall, activeCall, startDirectCall, startChannelCall } = useCall();
+export const ChatView = ({ channels = [], users = [], onOpenNewChannel }) => {
+  const { user, canInviteMembers } = useAuth();
+  const { joinCall, activeCall } = useCall();
 
   const [activeTab, setActiveTab] = useState('channel'); // 'channel' | 'dm'
   const [selectedChannelId, setSelectedChannelId] = useState(channels[0]?._id || '');
@@ -30,43 +30,8 @@ export const ChatView = ({ channels = [], users = [], onOpenNewChannel, initialT
   const [messageText, setMessageText] = useState('');
   const [typingUsers, setTypingUsers] = useState({});
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const [unreadCounts, setUnreadCounts] = useState({});
-  const [recentTimestamps, setRecentTimestamps] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem('devdrip_chat_recents') || '{}');
-    } catch {
-      return {};
-    }
-  });
-
-  const updateRecentTimestamp = (id) => {
-    if (!id) return;
-    setRecentTimestamps((prev) => {
-      const updated = { ...prev, [id]: Date.now() };
-      try {
-        localStorage.setItem('devdrip_chat_recents', JSON.stringify(updated));
-      } catch (e) {}
-      return updated;
-    });
-  };
 
   const messagesEndRef = useRef(null);
-
-  // Handle navigating directly from toast notification
-  useEffect(() => {
-    if (!initialTarget) return;
-    if (initialTarget.type === 'dm' && initialTarget.id) {
-      setActiveTab('dm');
-      setSelectedRecipientId(initialTarget.id);
-      setUnreadCounts((prev) => ({ ...prev, [initialTarget.id]: 0 }));
-      updateRecentTimestamp(initialTarget.id);
-    } else if (initialTarget.type === 'channel' && initialTarget.id) {
-      setActiveTab('channel');
-      setSelectedChannelId(initialTarget.id);
-      setUnreadCounts((prev) => ({ ...prev, [initialTarget.id]: 0 }));
-      updateRecentTimestamp(initialTarget.id);
-    }
-  }, [initialTarget]);
 
   // Set initial selected channel if available
   useEffect(() => {
@@ -75,7 +40,7 @@ export const ChatView = ({ channels = [], users = [], onOpenNewChannel, initialT
     }
   }, [channels]);
 
-  // Fetch messages when selection changes (with automatic polling fallback if WebSockets are unavailable)
+  // Fetch messages when selection changes
   useEffect(() => {
     const fetchChatMessages = async () => {
       try {
@@ -92,36 +57,6 @@ export const ChatView = ({ channels = [], users = [], onOpenNewChannel, initialT
     };
 
     fetchChatMessages();
-
-    // Polling fallback when WebSockets are disconnected (e.g. backend on Vercel serverless)
-    const interval = setInterval(async () => {
-      const socket = getSocket();
-      if (!socket || !socket.connected) {
-        fetchChatMessages();
-        try {
-          const recentRes = await api.getRecentMessages();
-          if (recentRes.success && recentRes.messages?.length > 0) {
-            recentRes.messages.forEach((m) => {
-              const sid = m.sender?._id || m.sender;
-              if (sid && sid !== user?._id) {
-                updateRecentTimestamp(m.channel || sid);
-                if (
-                  (activeTab === 'channel' && m.channel !== selectedChannelId) ||
-                  (activeTab === 'dm' && sid !== selectedRecipientId)
-                ) {
-                  setUnreadCounts((prev) => ({
-                    ...prev,
-                    [m.channel || sid]: (prev[m.channel || sid] || 0) + 1,
-                  }));
-                }
-              }
-            });
-          }
-        } catch (e) {}
-      }
-    }, 3200);
-
-    return () => clearInterval(interval);
   }, [activeTab, selectedChannelId, selectedRecipientId]);
 
   // Socket listeners for real-time messages & typing
@@ -134,42 +69,17 @@ export const ChatView = ({ channels = [], users = [], onOpenNewChannel, initialT
     }
 
     const handleNewMessage = (msg) => {
-      const isCurrentChannel =
-        activeTab === 'channel' && msg.channel === selectedChannelId;
-      const isCurrentDm =
-        activeTab === 'dm' &&
-        ((msg.sender?._id === selectedRecipientId && msg.recipient === user?._id) ||
-          (msg.sender?._id === user?._id && msg.recipient === selectedRecipientId));
-
-      const senderId = msg.sender?._id || msg.sender;
-      const recipientId = msg.recipient?._id || msg.recipient;
-
-      // Float sender/conversation to top of list
-      if (msg.channel) {
-        updateRecentTimestamp(msg.channel);
-      } else if (senderId && senderId !== user?._id) {
-        updateRecentTimestamp(senderId);
-      } else if (recipientId && recipientId !== user?._id) {
-        updateRecentTimestamp(recipientId);
-      }
-
-      if (isCurrentChannel || isCurrentDm) {
+      if (
+        (activeTab === 'channel' && msg.channel === selectedChannelId) ||
+        (activeTab === 'dm' &&
+          ((msg.sender?._id === selectedRecipientId && msg.recipient === user?._id) ||
+            (msg.sender?._id === user?._id && msg.recipient === selectedRecipientId)))
+      ) {
         setMessages((prev) => {
           if (prev.some((m) => m._id === msg._id)) return prev;
           return [...prev, msg];
         });
-        setTimeout(scrollToBottom, 50);
-      } else {
-        // Increment unread count badge for this sender/channel
-        if (senderId !== user?._id) {
-          const key = msg.channel || senderId;
-          if (key) {
-            setUnreadCounts((prev) => ({
-              ...prev,
-              [key]: (prev[key] || 0) + 1,
-            }));
-          }
-        }
+        scrollToBottom();
       }
     };
 
@@ -223,22 +133,11 @@ export const ChatView = ({ channels = [], users = [], onOpenNewChannel, initialT
     };
 
     try {
-      if (activeTab === 'channel' && selectedChannelId) {
-        updateRecentTimestamp(selectedChannelId);
-      } else if (activeTab === 'dm' && selectedRecipientId) {
-        updateRecentTimestamp(selectedRecipientId);
-      }
-
       const socket = getSocket();
-      if (socket && socket.connected) {
+      if (socket) {
         socket.emit('message:send', payload);
       } else {
-        // Fallback to REST API if WebSockets unavailable (e.g. Vercel backend)
-        const res = await api.sendMessage(payload);
-        if (res.success && res.message) {
-          setMessages((prev) => [...prev, res.message]);
-          setTimeout(scrollToBottom, 50);
-        }
+        await api.sendMessage(payload);
       }
       setMessageText('');
     } catch (err) {
@@ -248,41 +147,11 @@ export const ChatView = ({ channels = [], users = [], onOpenNewChannel, initialT
 
   const handleReact = async (msgId, emoji) => {
     try {
-      if (activeTab === 'channel' && selectedChannelId) {
-        updateRecentTimestamp(selectedChannelId);
-      } else if (activeTab === 'dm' && selectedRecipientId) {
-        updateRecentTimestamp(selectedRecipientId);
-      }
-
-      const socket = getSocket();
-      if (socket && socket.connected) {
-        socket.emit('message:react', { messageId: msgId, emoji, user });
-      } else {
-        const res = await api.reactToMessage(msgId, emoji);
-        if (res.success && res.message) {
-          setMessages((prev) =>
-            prev.map((m) => (m._id === msgId ? res.message : m))
-          );
-        }
-      }
+      await api.reactToMessage(msgId, emoji);
     } catch (err) {
       console.error('Reaction error:', err);
     }
   };
-
-  const sortedChannels = [...channels].sort((a, b) => {
-    const timeA = recentTimestamps[a._id] || 0;
-    const timeB = recentTimestamps[b._id] || 0;
-    if (timeA !== timeB) return timeB - timeA;
-    return (a.name || '').localeCompare(b.name || '');
-  });
-
-  const sortedDmUsers = [...users.filter((u) => u._id !== user?._id)].sort((a, b) => {
-    const timeA = recentTimestamps[a._id] || 0;
-    const timeB = recentTimestamps[b._id] || 0;
-    if (timeA !== timeB) return timeB - timeA; // Active/recent senders float to top!
-    return (a.name || '').localeCompare(b.name || '');
-  });
 
   const selectedChannel = channels.find((c) => c._id === selectedChannelId);
   const selectedRecipient = users.find((u) => u._id === selectedRecipientId);
@@ -305,31 +174,28 @@ export const ChatView = ({ channels = [], users = [], onOpenNewChannel, initialT
             <span className="sidebar-heading" style={{ margin: 0, padding: 0 }}>
               Team Channels
             </span>
-            {(canCreateChannel ? canCreateChannel() : canInviteMembers()) && (
+            {canInviteMembers() && (
               <button
                 className="btn btn-sm btn-secondary"
-                style={{ padding: '2px 8px', fontSize: '0.6875rem', display: 'flex', alignItems: 'center', gap: '4px' }}
-                title="Create Group / Channel"
+                style={{ padding: '2px 6px' }}
+                title="Create Channel"
                 onClick={onOpenNewChannel}
               >
-                <Plus size={12} />
-                <span>New</span>
+                <Plus size={13} />
               </button>
             )}
           </div>
 
-          {sortedChannels.map((ch) => {
+          {channels.map((ch) => {
             const isSelected = activeTab === 'channel' && selectedChannelId === ch._id;
-            const unread = unreadCounts[ch._id] || 0;
             return (
               <div
                 key={ch._id}
                 className={`nav-item ${isSelected ? 'active' : ''}`}
-                style={{ padding: '7px 10px', fontSize: '0.8125rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+                style={{ padding: '7px 10px', fontSize: '0.8125rem' }}
                 onClick={() => {
                   setActiveTab('channel');
                   setSelectedChannelId(ch._id);
-                  setUnreadCounts((prev) => ({ ...prev, [ch._id]: 0 }));
                 }}
               >
                 <div className="nav-item-left">
@@ -340,23 +206,6 @@ export const ChatView = ({ channels = [], users = [], onOpenNewChannel, initialT
                   )}
                   <span>{ch.name}</span>
                 </div>
-                {unread > 0 && (
-                  <span
-                    style={{
-                      background: 'linear-gradient(135deg, #ef4444, #f43f5e)',
-                      color: '#ffffff',
-                      fontSize: '0.6875rem',
-                      fontWeight: 800,
-                      padding: '1px 6px',
-                      borderRadius: '9999px',
-                      minWidth: '18px',
-                      textAlign: 'center',
-                      boxShadow: '0 0 8px rgba(239, 68, 68, 0.45)',
-                    }}
-                  >
-                    {unread}
-                  </span>
-                )}
               </div>
             );
           })}
@@ -367,18 +216,18 @@ export const ChatView = ({ channels = [], users = [], onOpenNewChannel, initialT
           <div className="sidebar-heading" style={{ margin: '0 0 10px 0', padding: 0 }}>
             Direct Messages
           </div>
-          {sortedDmUsers.map((u) => {
+          {users
+            .filter((u) => u._id !== user?._id)
+            .map((u) => {
               const isSelected = activeTab === 'dm' && selectedRecipientId === u._id;
-              const unread = unreadCounts[u._id] || 0;
               return (
                 <div
                   key={u._id}
                   className={`nav-item ${isSelected ? 'active' : ''}`}
-                  style={{ padding: '7px 10px', fontSize: '0.8125rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+                  style={{ padding: '7px 10px', fontSize: '0.8125rem' }}
                   onClick={() => {
                     setActiveTab('dm');
                     setSelectedRecipientId(u._id);
-                    setUnreadCounts((prev) => ({ ...prev, [u._id]: 0 }));
                   }}
                 >
                   <div className="nav-item-left">
@@ -410,28 +259,9 @@ export const ChatView = ({ channels = [], users = [], onOpenNewChannel, initialT
                     </div>
                     <span>{u.name}</span>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span className={`persona-role-badge role-${u.role}`} style={{ fontSize: '0.5625rem' }}>
-                      {u.role}
-                    </span>
-                    {unread > 0 && (
-                      <span
-                        style={{
-                          background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-                          color: '#ffffff',
-                          fontSize: '0.6875rem',
-                          fontWeight: 800,
-                          padding: '1px 6px',
-                          borderRadius: '9999px',
-                          minWidth: '18px',
-                          textAlign: 'center',
-                          boxShadow: '0 0 8px rgba(99, 102, 241, 0.45)',
-                        }}
-                      >
-                        {unread}
-                      </span>
-                    )}
-                  </div>
+                  <span className={`persona-role-badge role-${u.role}`} style={{ fontSize: '0.5625rem' }}>
+                    {u.role}
+                  </span>
                 </div>
               );
             })}
@@ -471,50 +301,17 @@ export const ChatView = ({ channels = [], users = [], onOpenNewChannel, initialT
             </div>
           </div>
 
-          {/* Action Buttons: 1-on-1 Audio/Video Call & Conference Ring */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {activeTab === 'dm' && selectedRecipient && (
-              <>
-                <button
-                  type="button"
-                  className="btn btn-sm btn-secondary"
-                  onClick={() => startDirectCall(selectedRecipient, 'audio')}
-                  title={`Start voice call with ${selectedRecipient.name}`}
-                  style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-                >
-                  <Phone size={13} style={{ color: '#10b981' }} />
-                  <span>Audio Call</span>
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-sm btn-primary"
-                  onClick={() => startDirectCall(selectedRecipient, 'video')}
-                  title={`Start video call with ${selectedRecipient.name}`}
-                  style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-                >
-                  <Video size={13} />
-                  <span>Video Call</span>
-                </button>
-              </>
-            )}
-
-            {activeTab === 'channel' && selectedChannel && (
-              <button
-                type="button"
-                className="btn btn-sm btn-primary"
-                onClick={() => startChannelCall(selectedChannel._id, selectedChannel.name, 'video')}
-                title="Ring all channel members for conference call"
-                style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-              >
-                <Video size={14} />
-                <span>
-                  {activeCall?.channelId === selectedChannel._id
-                    ? 'In Conference Call'
-                    : 'Start Conference (Ring All)'}
-                </span>
-              </button>
-            )}
-          </div>
+          {/* Quick Launch Video Call Button */}
+          {activeTab === 'channel' && selectedChannel && (
+            <button
+              className="btn btn-sm btn-primary"
+              onClick={() => joinCall(selectedChannel._id, selectedChannel.name)}
+              title="Start or join live WebRTC meeting"
+            >
+              <Video size={14} />
+              <span>{activeCall?.channelId === selectedChannel._id ? 'In Call' : 'Video Sync'}</span>
+            </button>
+          )}
         </div>
 
         {/* Messages Stream */}

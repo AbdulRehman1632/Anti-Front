@@ -8,11 +8,8 @@ import {
   Mail,
   Building,
   Key,
-  Phone,
-  Video,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
-import { useCall } from '../context/CallContext.jsx';
 import { api } from '../services/api.js';
 
 export const TeamView = ({
@@ -22,7 +19,6 @@ export const TeamView = ({
   onOpenProvisionModal,
 }) => {
   const { user: currentUser, canManageRoles, canInviteMembers } = useAuth();
-  const { startDirectCall } = useCall();
 
   const handleRoleChange = async (targetUserId, newRole) => {
     try {
@@ -163,31 +159,6 @@ export const TeamView = ({
                     <span>{u.department || 'Operations'}</span>
                   </div>
                 </div>
-
-                {!isMe && (
-                  <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-secondary"
-                      style={{ flex: 1, padding: '5px 8px', fontSize: '0.75rem', justifyContent: 'center' }}
-                      onClick={() => startDirectCall(u, 'audio')}
-                      title={`Audio Call ${u.name}`}
-                    >
-                      <Phone size={12} style={{ color: '#10b981' }} />
-                      <span>Voice Call</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-primary"
-                      style={{ flex: 1, padding: '5px 8px', fontSize: '0.75rem', justifyContent: 'center' }}
-                      onClick={() => startDirectCall(u, 'video')}
-                      title={`Video Call ${u.name}`}
-                    >
-                      <Video size={12} />
-                      <span>Video Call</span>
-                    </button>
-                  </div>
-                )}
               </div>
 
               {/* Role Change Dropdown (guarded: Owner only) */}
