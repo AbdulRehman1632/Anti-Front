@@ -4,16 +4,24 @@ let socket = null;
 
 const BACKEND_URL = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '') || window.location.origin;
 
+// Vercel serverless functions do not support WebSockets (returning HTTP 404 on handshake upgrade).
+// If connecting to *.vercel.app, force HTTP polling transport to prevent 404 console errors.
+const isVercel = BACKEND_URL.includes('vercel.app');
+
 export const initSocketClient = (currentUser) => {
   if (socket) {
-    socket.disconnect();
+    try {
+      socket.disconnect();
+    } catch (e) {}
   }
 
   socket = io(BACKEND_URL, {
-    transports: ['websocket', 'polling'],
-    reconnectionAttempts: 2,
-    reconnectionDelay: 2000,
-    timeout: 4000,
+    transports: isVercel ? ['polling'] : ['polling', 'websocket'],
+    upgrade: !isVercel,
+    reconnectionAttempts: 3,
+    reconnectionDelay: 2500,
+    timeout: 6000,
+    autoConnect: true,
   });
 
   socket.on('connect', () => {
@@ -24,8 +32,7 @@ export const initSocketClient = (currentUser) => {
   });
 
   socket.on('connect_error', (err) => {
-    // Vercel serverless functions do not support WebSockets; log graceful fallback notice
-    console.warn('ℹ️ Real-time WebSockets unavailable on host (falling back to REST API sync):', err.message);
+    console.warn('ℹ️ Real-time socket sync notice:', err.message);
   });
 
   socket.on('disconnect', () => {
@@ -36,5 +43,3 @@ export const initSocketClient = (currentUser) => {
 };
 
 export const getSocket = () => socket;
-
-

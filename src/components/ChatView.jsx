@@ -19,7 +19,7 @@ import { getSocket } from '../services/socket.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useCall } from '../context/CallContext.jsx';
 
-export const ChatView = ({ channels = [], users = [], onOpenNewChannel }) => {
+export const ChatView = ({ channels = [], users = [], onOpenNewChannel, initialTarget = null }) => {
   const { user, canInviteMembers, canCreateChannel } = useAuth();
   const { joinCall, activeCall, startDirectCall, startChannelCall } = useCall();
 
@@ -31,8 +31,42 @@ export const ChatView = ({ channels = [], users = [], onOpenNewChannel }) => {
   const [typingUsers, setTypingUsers] = useState({});
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [unreadCounts, setUnreadCounts] = useState({});
+  const [recentTimestamps, setRecentTimestamps] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('devdrip_chat_recents') || '{}');
+    } catch {
+      return {};
+    }
+  });
+
+  const updateRecentTimestamp = (id) => {
+    if (!id) return;
+    setRecentTimestamps((prev) => {
+      const updated = { ...prev, [id]: Date.now() };
+      try {
+        localStorage.setItem('devdrip_chat_recents', JSON.stringify(updated));
+      } catch (e) {}
+      return updated;
+    });
+  };
 
   const messagesEndRef = useRef(null);
+
+  // Handle navigating directly from toast notification
+  useEffect(() => {
+    if (!initialTarget) return;
+    if (initialTarget.type === 'dm' && initialTarget.id) {
+      setActiveTab('dm');
+      setSelectedRecipientId(initialTarget.id);
+      setUnreadCounts((prev) => ({ ...prev, [initialTarget.id]: 0 }));
+      updateRecentTimestamp(initialTarget.id);
+    } else if (initialTarget.type === 'channel' && initialTarget.id) {
+      setActiveTab('channel');
+      setSelectedChannelId(initialTarget.id);
+      setUnreadCounts((prev) => ({ ...prev, [initialTarget.id]: 0 }));
+      updateRecentTimestamp(initialTarget.id);
+    }
+  }, [initialTarget]);
 
   // Set initial selected channel if available
   useEffect(() => {
@@ -60,12 +94,32 @@ export const ChatView = ({ channels = [], users = [], onOpenNewChannel }) => {
     fetchChatMessages();
 
     // Polling fallback when WebSockets are disconnected (e.g. backend on Vercel serverless)
-    const interval = setInterval(() => {
+    const interval = setInterval(async () => {
       const socket = getSocket();
       if (!socket || !socket.connected) {
         fetchChatMessages();
+        try {
+          const recentRes = await api.getRecentMessages();
+          if (recentRes.success && recentRes.messages?.length > 0) {
+            recentRes.messages.forEach((m) => {
+              const sid = m.sender?._id || m.sender;
+              if (sid && sid !== user?._id) {
+                updateRecentTimestamp(m.channel || sid);
+                if (
+                  (activeTab === 'channel' && m.channel !== selectedChannelId) ||
+                  (activeTab === 'dm' && sid !== selectedRecipientId)
+                ) {
+                  setUnreadCounts((prev) => ({
+                    ...prev,
+                    [m.channel || sid]: (prev[m.channel || sid] || 0) + 1,
+                  }));
+                }
+              }
+            });
+          }
+        } catch (e) {}
       }
-    }, 3500);
+    }, 3200);
 
     return () => clearInterval(interval);
   }, [activeTab, selectedChannelId, selectedRecipientId]);
@@ -87,6 +141,18 @@ export const ChatView = ({ channels = [], users = [], onOpenNewChannel }) => {
         ((msg.sender?._id === selectedRecipientId && msg.recipient === user?._id) ||
           (msg.sender?._id === user?._id && msg.recipient === selectedRecipientId));
 
+      const senderId = msg.sender?._id || msg.sender;
+      const recipientId = msg.recipient?._id || msg.recipient;
+
+      // Float sender/conversation to top of list
+      if (msg.channel) {
+        updateRecentTimestamp(msg.channel);
+      } else if (senderId && senderId !== user?._id) {
+        updateRecentTimestamp(senderId);
+      } else if (recipientId && recipientId !== user?._id) {
+        updateRecentTimestamp(recipientId);
+      }
+
       if (isCurrentChannel || isCurrentDm) {
         setMessages((prev) => {
           if (prev.some((m) => m._id === msg._id)) return prev;
@@ -95,7 +161,6 @@ export const ChatView = ({ channels = [], users = [], onOpenNewChannel }) => {
         setTimeout(scrollToBottom, 50);
       } else {
         // Increment unread count badge for this sender/channel
-        const senderId = msg.sender?._id || msg.sender;
         if (senderId !== user?._id) {
           const key = msg.channel || senderId;
           if (key) {
@@ -158,6 +223,12 @@ export const ChatView = ({ channels = [], users = [], onOpenNewChannel }) => {
     };
 
     try {
+      if (activeTab === 'channel' && selectedChannelId) {
+        updateRecentTimestamp(selectedChannelId);
+      } else if (activeTab === 'dm' && selectedRecipientId) {
+        updateRecentTimestamp(selectedRecipientId);
+      }
+
       const socket = getSocket();
       if (socket && socket.connected) {
         socket.emit('message:send', payload);
@@ -177,6 +248,12 @@ export const ChatView = ({ channels = [], users = [], onOpenNewChannel }) => {
 
   const handleReact = async (msgId, emoji) => {
     try {
+      if (activeTab === 'channel' && selectedChannelId) {
+        updateRecentTimestamp(selectedChannelId);
+      } else if (activeTab === 'dm' && selectedRecipientId) {
+        updateRecentTimestamp(selectedRecipientId);
+      }
+
       const socket = getSocket();
       if (socket && socket.connected) {
         socket.emit('message:react', { messageId: msgId, emoji, user });
@@ -192,6 +269,20 @@ export const ChatView = ({ channels = [], users = [], onOpenNewChannel }) => {
       console.error('Reaction error:', err);
     }
   };
+
+  const sortedChannels = [...channels].sort((a, b) => {
+    const timeA = recentTimestamps[a._id] || 0;
+    const timeB = recentTimestamps[b._id] || 0;
+    if (timeA !== timeB) return timeB - timeA;
+    return (a.name || '').localeCompare(b.name || '');
+  });
+
+  const sortedDmUsers = [...users.filter((u) => u._id !== user?._id)].sort((a, b) => {
+    const timeA = recentTimestamps[a._id] || 0;
+    const timeB = recentTimestamps[b._id] || 0;
+    if (timeA !== timeB) return timeB - timeA; // Active/recent senders float to top!
+    return (a.name || '').localeCompare(b.name || '');
+  });
 
   const selectedChannel = channels.find((c) => c._id === selectedChannelId);
   const selectedRecipient = users.find((u) => u._id === selectedRecipientId);
@@ -227,7 +318,7 @@ export const ChatView = ({ channels = [], users = [], onOpenNewChannel }) => {
             )}
           </div>
 
-          {channels.map((ch) => {
+          {sortedChannels.map((ch) => {
             const isSelected = activeTab === 'channel' && selectedChannelId === ch._id;
             const unread = unreadCounts[ch._id] || 0;
             return (
@@ -276,9 +367,7 @@ export const ChatView = ({ channels = [], users = [], onOpenNewChannel }) => {
           <div className="sidebar-heading" style={{ margin: '0 0 10px 0', padding: 0 }}>
             Direct Messages
           </div>
-          {users
-            .filter((u) => u._id !== user?._id)
-            .map((u) => {
+          {sortedDmUsers.map((u) => {
               const isSelected = activeTab === 'dm' && selectedRecipientId === u._id;
               const unread = unreadCounts[u._id] || 0;
               return (

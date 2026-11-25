@@ -77,6 +77,7 @@ function MainApp() {
   const [isChannelModalOpen, setIsChannelModalOpen] = useState(false);
   const [isProvisionModalOpen, setIsProvisionModalOpen] = useState(false);
   const [messageToast, setMessageToast] = useState(null);
+  const [chatInitialTarget, setChatInitialTarget] = useState(null);
 
   const loadData = async () => {
     try {
@@ -151,7 +152,28 @@ function MainApp() {
     socket.on('lifecycle:updated', onLifecycleUpdated);
     socket.on('message:new', onNewMessage);
 
+    // Fallback polling for incoming messages / toasts on serverless hosts
+    const pollToastTimer = setInterval(async () => {
+      const s = getSocket();
+      if (!s || !s.connected) {
+        try {
+          const res = await api.getRecentMessages();
+          if (res.success && res.messages?.length > 0) {
+            const latest = res.messages[0];
+            const senderId = latest.sender?._id || latest.sender;
+            if (senderId && senderId !== user?._id) {
+              const diff = Date.now() - new Date(latest.createdAt).getTime();
+              if (diff < 9000) {
+                setMessageToast((prev) => (prev?._id === latest._id ? prev : latest));
+              }
+            }
+          }
+        } catch (e) {}
+      }
+    }, 3800);
+
     return () => {
+      clearInterval(pollToastTimer);
       socket.off('task:created', onTaskCreated);
       socket.off('task:updated', onTaskUpdated);
       socket.off('task:deleted', onTaskDeleted);
@@ -270,6 +292,7 @@ function MainApp() {
                   channels={channels}
                   users={users}
                   onOpenNewChannel={() => setIsChannelModalOpen(true)}
+                  initialTarget={chatInitialTarget}
                 />
               )}
 
@@ -340,7 +363,17 @@ function MainApp() {
       <MessageToast
         toast={messageToast}
         onClose={() => setMessageToast(null)}
-        onNavigateToChat={() => setCurrentView('chat')}
+        onNavigateToChat={(toastData) => {
+          setCurrentView('chat');
+          if (toastData?.channel) {
+            setChatInitialTarget({ type: 'channel', id: toastData.channel });
+          } else {
+            const sid = toastData?.sender?._id || toastData?.sender;
+            if (sid) {
+              setChatInitialTarget({ type: 'dm', id: sid });
+            }
+          }
+        }}
       />
     </div>
   );
