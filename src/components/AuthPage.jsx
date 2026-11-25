@@ -268,6 +268,31 @@ export const AuthPage = ({ onAuthSuccess }) => {
                     <><span>Sign In to Workspace</span><ArrowRight size={16} /></>
                   )}
                 </button>
+
+                {/* Quick Fill Demo Credentials */}
+                <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginBottom: '8px', textAlign: 'center' }}>
+                    Quick Demo Credentials (Click to auto-fill):
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      style={{ fontSize: '0.75rem', justifyContent: 'center' }}
+                      onClick={() => setFormData((prev) => ({ ...prev, email: 'owner@devdrip.com', password: 'password123' }))}
+                    >
+                      👑 Owner Demo
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      style={{ fontSize: '0.75rem', justifyContent: 'center' }}
+                      onClick={() => setFormData((prev) => ({ ...prev, email: 'admin@devdrip.com', password: 'password123' }))}
+                    >
+                      🛡️ Admin Demo
+                    </button>
+                  </div>
+                </div>
               </>
             ) : (
               /* ── SIGN UP ── */

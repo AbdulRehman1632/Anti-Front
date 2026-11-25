@@ -18,6 +18,9 @@ import { InviteModal } from './components/InviteModal.jsx';
 import { ChannelModal } from './components/ChannelModal.jsx';
 import { ProvisionCredentialsModal } from './components/ProvisionCredentialsModal.jsx';
 import { AuthPage } from './components/AuthPage.jsx';
+import { IncomingCallModal } from './components/IncomingCallModal.jsx';
+import { OutgoingCallModal } from './components/OutgoingCallModal.jsx';
+import { MessageToast } from './components/MessageToast.jsx';
 
 
 function LoadingScreen() {
@@ -73,6 +76,8 @@ function MainApp() {
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
   const [isChannelModalOpen, setIsChannelModalOpen] = useState(false);
   const [isProvisionModalOpen, setIsProvisionModalOpen] = useState(false);
+  const [messageToast, setMessageToast] = useState(null);
+  const [chatInitialTarget, setChatInitialTarget] = useState(null);
 
   const loadData = async () => {
     try {
@@ -132,20 +137,50 @@ function MainApp() {
       } catch (e) {}
     };
 
+    const onNewMessage = (msg) => {
+      const senderId = msg?.sender?._id || msg?.sender;
+      if (senderId && senderId !== user?._id) {
+        setMessageToast(msg);
+      }
+    };
+
     socket.on('task:created', onTaskCreated);
     socket.on('task:updated', onTaskUpdated);
     socket.on('task:deleted', onTaskDeleted);
     socket.on('channel:created', onChannelCreated);
     socket.on('customFields:updated', onCustomFieldsUpdated);
     socket.on('lifecycle:updated', onLifecycleUpdated);
+    socket.on('message:new', onNewMessage);
+
+    // Fallback polling for incoming messages / toasts on serverless hosts
+    const pollToastTimer = setInterval(async () => {
+      const s = getSocket();
+      if (!s || !s.connected) {
+        try {
+          const res = await api.getRecentMessages();
+          if (res.success && res.messages?.length > 0) {
+            const latest = res.messages[0];
+            const senderId = latest.sender?._id || latest.sender;
+            if (senderId && senderId !== user?._id) {
+              const diff = Date.now() - new Date(latest.createdAt).getTime();
+              if (diff < 9000) {
+                setMessageToast((prev) => (prev?._id === latest._id ? prev : latest));
+              }
+            }
+          }
+        } catch (e) {}
+      }
+    }, 3800);
 
     return () => {
+      clearInterval(pollToastTimer);
       socket.off('task:created', onTaskCreated);
       socket.off('task:updated', onTaskUpdated);
       socket.off('task:deleted', onTaskDeleted);
       socket.off('channel:created', onChannelCreated);
       socket.off('customFields:updated', onCustomFieldsUpdated);
       socket.off('lifecycle:updated', onLifecycleUpdated);
+      socket.off('message:new', onNewMessage);
     };
   }, [selectedTask]);
 
@@ -257,6 +292,7 @@ function MainApp() {
                   channels={channels}
                   users={users}
                   onOpenNewChannel={() => setIsChannelModalOpen(true)}
+                  initialTarget={chatInitialTarget}
                 />
               )}
 
@@ -310,12 +346,34 @@ function MainApp() {
         isOpen={isChannelModalOpen}
         onClose={() => setIsChannelModalOpen(false)}
         onChannelCreated={loadData}
+        users={users}
       />
 
       <ProvisionCredentialsModal
         isOpen={isProvisionModalOpen}
         onClose={() => setIsProvisionModalOpen(false)}
         onCredentialsCreated={loadData}
+      />
+
+      {/* Real-Time Call Popup Modals (1-on-1 Direct & Conference Ringing) */}
+      <IncomingCallModal />
+      <OutgoingCallModal />
+
+      {/* Sliding Incoming Message Toast */}
+      <MessageToast
+        toast={messageToast}
+        onClose={() => setMessageToast(null)}
+        onNavigateToChat={(toastData) => {
+          setCurrentView('chat');
+          if (toastData?.channel) {
+            setChatInitialTarget({ type: 'channel', id: toastData.channel });
+          } else {
+            const sid = toastData?.sender?._id || toastData?.sender;
+            if (sid) {
+              setChatInitialTarget({ type: 'dm', id: sid });
+            }
+          }
+        }}
       />
     </div>
   );

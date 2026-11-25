@@ -1,4 +1,5 @@
-const API_BASE = '/api';
+const BACKEND_URL = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
+const API_BASE = BACKEND_URL ? `${BACKEND_URL}/api` : '/api';
 
 const getHeaders = () => {
   const token = localStorage.getItem('devdrip_token');
@@ -358,6 +359,56 @@ export const api = {
   async deleteLifecycleStage(id) {
     const res = await fetch(`${API_BASE}/lifecycle-stages/${id}`, {
       method: 'DELETE',
+      headers: getHeaders(),
+    });
+    return handleResponse(res);
+  },
+
+  // Calling & WebRTC Signaling
+  async initiateCall(callData) {
+    const res = await fetch(`${API_BASE}/calls/initiate`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(callData),
+    });
+    return handleResponse(res);
+  },
+
+  async getIncomingCall() {
+    const res = await fetch(`${API_BASE}/calls/incoming`, {
+      headers: getHeaders(),
+    });
+    return handleResponse(res);
+  },
+
+  async getCallStatus(callId) {
+    const res = await fetch(`${API_BASE}/calls/${callId}`, {
+      headers: getHeaders(),
+    });
+    return handleResponse(res);
+  },
+
+  async respondToCall(callId, action, reason) {
+    const res = await fetch(`${API_BASE}/calls/${callId}/respond`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ action, reason }),
+    });
+    return handleResponse(res);
+  },
+
+  async endCall(callId) {
+    const res = await fetch(`${API_BASE}/calls/${callId}/end`, {
+      method: 'POST',
+      headers: getHeaders(),
+    });
+    return handleResponse(res);
+  },
+
+  // Recent messages for toasts & live polling
+  async getRecentMessages(since) {
+    const query = since ? `?since=${encodeURIComponent(since)}` : '';
+    const res = await fetch(`${API_BASE}/messages/recent${query}`, {
       headers: getHeaders(),
     });
     return handleResponse(res);

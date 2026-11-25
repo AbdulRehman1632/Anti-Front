@@ -98,11 +98,11 @@ const ROLE_PERMISSIONS = {
     'TASK_VIEW', 'TASK_ASSIGN', 'COMMENT_POST', 'CALL_HOST', 'CALL_JOIN'
   ],
   Editor: [
-    'CHANNEL_VIEW', 'TASK_CREATE', 'TASK_UPDATE',
-    'TASK_DELETE', 'TASK_VIEW', 'COMMENT_POST', 'CALL_JOIN'
+    'USER_INVITE', 'CHANNEL_CREATE', 'CHANNEL_VIEW', 'TASK_CREATE', 'TASK_UPDATE',
+    'TASK_DELETE', 'TASK_VIEW', 'COMMENT_POST', 'CALL_HOST', 'CALL_JOIN'
   ],
   Viewer: [
-    'CHANNEL_VIEW', 'TASK_VIEW', 'CALL_JOIN_LISTEN_ONLY'
+    'USER_INVITE', 'CHANNEL_CREATE', 'CHANNEL_VIEW', 'TASK_VIEW', 'COMMENT_POST', 'CALL_HOST', 'CALL_JOIN'
   ],
 };
 
@@ -111,7 +111,6 @@ export const AuthProvider = ({ children }) => {
   const [token, setToken] = useState(() => localStorage.getItem('devdrip_token'));
   const [loading, setLoading] = useState(true);
 
-  // On mount: validate existing token or leave user null (forces login page)
   useEffect(() => {
     const initializeAuth = async () => {
       const storedToken = localStorage.getItem('devdrip_token');
@@ -123,7 +122,6 @@ export const AuthProvider = ({ children }) => {
             setToken(storedToken);
             initSocketClient(res.user);
           } else {
-            // Token invalid — clear it
             localStorage.removeItem('devdrip_token');
             setToken(null);
           }
@@ -191,6 +189,7 @@ export const AuthProvider = ({ children }) => {
   const canDeleteTasks = () => ['Owner', 'Admin'].includes(user?.role);
   const canManageRoles = () => ['Owner'].includes(user?.role);
   const canInviteMembers = () => ['Owner', 'Admin'].includes(user?.role);
+  const canCreateChannel = () => ['Owner', 'Admin', 'Editor'].includes(user?.role);
 
   return (
     <AuthContext.Provider
@@ -207,6 +206,7 @@ export const AuthProvider = ({ children }) => {
         canDeleteTasks,
         canManageRoles,
         canInviteMembers,
+        canCreateChannel,
       }}
     >
       {children}
